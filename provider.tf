@@ -13,8 +13,8 @@ provider "aws" {
 
 terraform {
   backend "s3" {
-    bucket         = "tfstate-steed"
-    key            = "dev/terraform.tfstate" # Path inside the bucket
-    region         = "eu-west-1"
+    bucket = "tfstate-steed"
+    key    = "dev/terraform.tfstate" # Path inside the bucket
+    region = "eu-west-1"
   }
 }

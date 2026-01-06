@@ -1,4 +1,4 @@
 # aws-tf-learnings
 basic stuff for tf and aws
 
-commit 1
+commit 6
