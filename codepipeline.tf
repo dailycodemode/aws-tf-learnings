@@ -133,12 +133,56 @@ resource "aws_iam_role_policy" "pipeline_codebuild_execution" {
   })
 }
 
+resource "aws_iam_role_policy" "codebuild_connection_policy" {
+  name = "codebuild-connection-policy"
+  role = aws_iam_role.codebuild_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "codeconnections:UseConnection",
+          "codestar-connections:UseConnection"
+        ]
+        Resource = aws_codeconnections_connection.github.arn
+      }
+    ]
+  })
+}
+
 # --- 4. The CodePipeline ---
 resource "aws_codepipeline" "terraform_pipeline" {
   name     = "terraform-deployment-pipeline"
   role_arn = aws_iam_role.pipeline_role.arn
 
-  pipeline_type = "V2" # Upgraded to V2 for advanced 2026 features
+  pipeline_type = "V2" # Upgraded to V2 for advanced features
+
+  # Define custom pipeline variables that can be overridden when releasing a change
+  variable {
+    name          = "AWS_ACCOUNT"
+    default_value = "."
+    description   = "Target environment for deployment (e.g., staging, production)"
+  }
+
+  variable {
+    name          = "GIT_TAG"
+    default_value = "."
+    description   = "Specific Git tag to checkout and deploy (leave blank for latest main)"
+  }
+
+  variable {
+    name          = "GIT_BRANCH"
+    default_value = "."
+    description   = "Specific Git branch to checkout and deploy (leave blank for latest main)"
+  }
+
+  variable {
+    name          = "GIT_COMMIT"
+    default_value = "."
+    description   = "Specific Git commit to checkout and deploy (leave blank for latest main)"
+  }
 
   artifact_store {
     location = aws_s3_bucket.pipeline_artifacts.bucket
@@ -152,20 +196,19 @@ resource "aws_codepipeline" "terraform_pipeline" {
       name             = "Source"
       category         = "Source"
       owner            = "AWS"
-      provider         = "CodeStarSourceConnection" # Correct provider for GitHub App
+      provider         = "CodeStarSourceConnection"
       version          = "1"
       output_artifacts = ["source_output"]
 
       configuration = {
-        ConnectionArn    = aws_codeconnections_connection.github.arn
-        FullRepositoryId = "dailycodemode/terraform-sandbox" # e.g. "acme-corp/infra-repo"
-        BranchName       = "main"
-        OutputArtifactFormat = "CODE_ZIP"
+        ConnectionArn        = aws_codeconnections_connection.github.arn
+        FullRepositoryId     = "dailycodemode/terraform-sandbox"
+        BranchName           = "main"
+        OutputArtifactFormat = "CODEBUILD_CLONE_REF"
       }
     }
   }
 
-    
   stage {
     name = "Plan"
     action {
@@ -176,7 +219,33 @@ resource "aws_codepipeline" "terraform_pipeline" {
       input_artifacts  = ["source_output"]
       output_artifacts = ["plan_output"]
       version          = "1"
-      configuration    = { ProjectName = aws_codebuild_project.tf_plan.name }
+
+      # Pass pipeline variables into CodeBuild environment variables
+      configuration = {
+        ProjectName = aws_codebuild_project.tf_plan.name
+        EnvironmentVariables = jsonencode([
+          {
+            name  = "AWS_ACCOUNT"
+            value = "#{variables.AWS_ACCOUNT}"
+            type  = "PLAINTEXT"
+          },
+          {
+            name  = "GIT_BRANCH"
+            value = "#{variables.GIT_BRANCH}"
+            type  = "PLAINTEXT"
+          },
+          {
+            name  = "GIT_TAG"
+            value = "#{variables.GIT_TAG}"
+            type  = "PLAINTEXT"
+          },
+          {
+            name  = "GIT_COMMIT"
+            value = "#{variables.GIT_TAG}"
+            type  = "PLAINTEXT"
+          }
+        ])
+      }
     }
   }
 
@@ -200,7 +269,23 @@ resource "aws_codepipeline" "terraform_pipeline" {
       provider        = "CodeBuild"
       input_artifacts = ["plan_output"]
       version         = "1"
-      configuration   = { ProjectName = aws_codebuild_project.tf_apply.name }
+
+      # Pass pipeline variables to Apply stage as well if needed
+      configuration = {
+        ProjectName = aws_codebuild_project.tf_apply.name
+        EnvironmentVariables = jsonencode([
+          {
+            name  = "AWS_ACCOUNT"
+            value = "#{variables.AWS_ACCOUNT}"
+            type  = "PLAINTEXT"
+          },
+          {
+            name  = "GIT_TAG"
+            value = "#{variables.GIT_TAG}"
+            type  = "PLAINTEXT"
+          }
+        ])
+      }
     }
   }
 }
